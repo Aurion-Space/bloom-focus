@@ -1,0 +1,57 @@
+services:
+  bloomfocus-api:
+    build:
+      context: .
+      dockerfile: deploy/api.Dockerfile
+    container_name: bloomfocus-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_PATH: /app/server/data/bloomfocus.db
+      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      BCRYPT_COST: ${BCRYPT_COST:-10}
+    volumes:
+      - bloomfocus-data:/app/server/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:4000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  bloomfocus-web:
+    build:
+      context: .
+      dockerfile: deploy/web.Dockerfile
+    container_name: bloomfocus-web
+    restart: unless-stopped
+    depends_on:
+      bloomfocus-api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1/ || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    networks:
+      - default
+      - ai-apps
+
+networks:
+  ai-apps:
+    external: true
+
+volumes:
+  bloomfocus-data:
+    driver: local

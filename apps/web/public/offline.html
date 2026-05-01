@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#FFF9F0" />
+    <title>BloomFocus Offline</title>
+    <style>
+      :root {
+        --bg: #fff9f0;
+        --surface: #ffffff;
+        --ink: #3b2e2a;
+        --ink-soft: #6b5d54;
+        --line: #eadbc8;
+        --petal: #e89aae;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background:
+          radial-gradient(circle at top, rgba(245, 183, 199, 0.35), transparent 35%),
+          var(--bg);
+        color: var(--ink);
+        font-family: "Nunito", system-ui, sans-serif;
+      }
+
+      main {
+        width: min(100%, 420px);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        padding: 32px 28px;
+        text-align: center;
+        box-shadow: 0 18px 40px rgba(95, 70, 50, 0.12);
+      }
+
+      .mark {
+        width: 88px;
+        height: 88px;
+        margin: 0 auto 18px;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font: 400 2rem "DM Serif Display", Georgia, serif;
+      }
+
+      p {
+        margin: 0 0 20px;
+        color: var(--ink-soft);
+        line-height: 1.5;
+      }
+
+      a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px 18px;
+        border-radius: 999px;
+        background: var(--petal);
+        color: #fff;
+        text-decoration: none;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img class="mark" src="/icon-192.png" alt="BloomFocus icon" />
+      <h1>BloomFocus is offline</h1>
+      <p>Your garden will be back as soon as the connection returns. If you were already browsing, try refreshing once you're online again.</p>
+      <a href="/">Try again</a>
+    </main>
+  </body>
+</html>

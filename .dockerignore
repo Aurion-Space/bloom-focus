@@ -1,0 +1,17 @@
+.git
+.gitignore
+node_modules
+**/node_modules
+dist
+**/dist
+.env
+**/.env
+server/data
+*.db
+*.db-shm
+*.db-wal
+npm-debug.log*
+server/test_output.txt
+server/test_error.txt
+server/test_output_*.txt
+server/test_error_*.txt
