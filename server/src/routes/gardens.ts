@@ -1,7 +1,15 @@
 import { Router } from 'express';
 import db from '../db.js';
 import { hashPattern, verifyPattern } from '../lib/hash.js';
-import { createRateLimitMiddleware, gardenCreateRateLimiter, unlockRateLimiter } from '../lib/rate-limit.js';
+import { createRateLimitMiddleware, gardenCreateRateLimiter, recoverRateLimiter, unlockRateLimiter } from '../lib/rate-limit.js';
+import {
+  generateRecoveryCode,
+  hashRecoveryCode,
+  isWellFormedRecoveryCode,
+  normalizeRecoveryCode,
+  recoveryCodeMatches,
+} from '../lib/recovery.js';
+import { utcNowIso } from '../lib/dates.js';
 import { generateToken, requireGarden, AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
@@ -13,6 +21,12 @@ interface CreateGardenBody {
 
 interface UnlockBody {
   garden_id: string;
+  pattern: string;
+}
+
+interface RecoverBody {
+  garden_id: string;
+  recovery_code: string;
   pattern: string;
 }
 
@@ -45,16 +59,122 @@ router.post(
     }
 
     const patternHash = await hashPattern(pattern);
+    const recoveryCode = generateRecoveryCode();
 
-    const stmt = db.prepare('INSERT INTO gardens (garden_id, pattern_hash) VALUES (?, ?)');
-    stmt.run(garden_id.toLowerCase(), patternHash);
+    // Two requests for the same garden_id can both clear the check above while
+    // the other is hashing, so the UNIQUE constraint is the real arbiter.
+    try {
+      const stmt = db.prepare(
+        'INSERT INTO gardens (garden_id, pattern_hash, recovery_hash, recovery_issued_at) VALUES (?, ?, ?, ?)'
+      );
+      stmt.run(
+        garden_id.toLowerCase(),
+        patternHash,
+        hashRecoveryCode(normalizeRecoveryCode(recoveryCode)),
+        utcNowIso()
+      );
+    } catch (err) {
+      if ((err as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        return res.status(409).json({ error: 'taken' });
+      }
+      throw err;
+    }
 
     const garden = db.prepare('SELECT garden_id, created_at FROM gardens WHERE garden_id = ?').get(garden_id.toLowerCase()) as { garden_id: string; created_at: string };
     const token = generateToken(garden_id.toLowerCase());
 
-    res.status(201).json({ token, garden });
+    // The only time the plaintext code exists outside the user's own device.
+    res.status(201).json({ token, garden, recovery_code: recoveryCode });
   }
 );
+
+/**
+ * Issue a fresh recovery code for the garden the caller is already inside.
+ * This is how gardens created before recovery existed get a code, and how
+ * anyone replaces one they think has been seen.
+ */
+router.post('/recovery-code', requireGarden, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const recoveryCode = generateRecoveryCode();
+
+  const result = db.prepare(
+    'UPDATE gardens SET recovery_hash = ?, recovery_issued_at = ? WHERE garden_id = ?'
+  ).run(hashRecoveryCode(normalizeRecoveryCode(recoveryCode)), utcNowIso(), authReq.gardenId);
+
+  if (result.changes === 0) {
+    return res.status(404).json({ error: 'not_found' });
+  }
+
+  res.json({ recovery_code: recoveryCode });
+});
+
+/**
+ * Reset a forgotten pattern using the recovery code. Succeeding rotates the
+ * code, so a card that has been used — or photographed by someone else after
+ * use — is worthless.
+ */
+router.post('/recover', async (req, res) => {
+  const { garden_id, recovery_code, pattern } = req.body as RecoverBody;
+
+  if (!garden_id || !/^[a-z0-9]{3,20}$/.test(garden_id)) {
+    return res.status(400).json({ error: 'invalid_id' });
+  }
+
+  const garden = db.prepare(
+    'SELECT garden_id, recovery_hash FROM gardens WHERE garden_id = ?'
+  ).get(garden_id.toLowerCase()) as { garden_id: string; recovery_hash: string | null } | undefined;
+
+  if (!garden) {
+    return res.status(404).json({ error: 'not_found' });
+  }
+
+  if (!validatePattern(pattern)) {
+    return res.status(400).json({ error: 'invalid_pattern' });
+  }
+
+  // Consume the attempt before touching the stored hash, so this endpoint can
+  // never be used as a fast oracle for guessing codes.
+  const rateLimitKey = `${req.ip}:${garden_id.toLowerCase()}`;
+  const rateLimitResult = recoverRateLimiter.consume(rateLimitKey);
+  if (!rateLimitResult.allowed) {
+    res.setHeader('Retry-After', rateLimitResult.retryAfterSeconds.toString());
+    return res.status(429).json({ error: 'too_many_attempts' });
+  }
+
+  if (!garden.recovery_hash) {
+    return res.status(409).json({ error: 'no_recovery_code' });
+  }
+
+  const canonical = normalizeRecoveryCode(recovery_code);
+  if (!isWellFormedRecoveryCode(canonical) || !recoveryCodeMatches(canonical, garden.recovery_hash)) {
+    return res.status(401).json({ error: 'invalid_recovery_code' });
+  }
+
+  const patternHash = await hashPattern(pattern);
+  const nextRecoveryCode = generateRecoveryCode();
+
+  db.prepare(
+    'UPDATE gardens SET pattern_hash = ?, recovery_hash = ?, recovery_issued_at = ? WHERE garden_id = ?'
+  ).run(
+    patternHash,
+    hashRecoveryCode(normalizeRecoveryCode(nextRecoveryCode)),
+    utcNowIso(),
+    garden.garden_id
+  );
+
+  recoverRateLimiter.reset(rateLimitKey);
+  unlockRateLimiter.reset(rateLimitKey);
+
+  const updated = db.prepare(
+    'SELECT garden_id, created_at FROM gardens WHERE garden_id = ?'
+  ).get(garden.garden_id) as { garden_id: string; created_at: string };
+
+  res.json({
+    token: generateToken(garden.garden_id),
+    garden: updated,
+    recovery_code: nextRecoveryCode,
+  });
+});
 
 router.post('/unlock', async (req, res) => {
   const { garden_id, pattern } = req.body as UnlockBody;

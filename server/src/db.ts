@@ -16,10 +16,21 @@ export function getDb(): any {
   return _db;
 }
 
+// Applied in order and tracked with PRAGMA user_version. Listed explicitly
+// rather than globbed so that 002_seed.sql — demo data with a placeholder
+// password hash — can never reach a real database.
+const MIGRATIONS = ['001_init.sql', '002_recovery.sql'];
+
 export function runMigrations() {
-  const migrationPath = join(__dirname, '..', 'migrations', '001_init.sql');
-  const sql = readFileSync(migrationPath, 'utf-8');
-  getDb().exec(sql);
+  const db = getDb();
+  const applied = db.pragma('user_version', { simple: true }) as number;
+
+  for (let version = applied; version < MIGRATIONS.length; version++) {
+    const sql = readFileSync(join(__dirname, '..', 'migrations', MIGRATIONS[version]), 'utf-8');
+    db.exec(sql);
+  }
+
+  db.pragma(`user_version = ${MIGRATIONS.length}`);
 }
 
 class DbProxy {

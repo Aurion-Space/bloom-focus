@@ -2,6 +2,7 @@ import React from 'react';
 import { api } from '../api';
 import { PlantSVG } from '../plants/plants';
 import { PatternLock } from '../components/pattern-lock';
+import { RecoveryCard } from './screens-recovery';
 
 function LogoMark({ size = 56 }: { size?: number }) {
   return (
@@ -61,7 +62,9 @@ function WelcomeScreen({ onEnter }: { onEnter: (step: 'create' | 'unlock') => vo
 }
 
 function CreateGardenScreen({ onBack, onCreate }: { onBack: () => void; onCreate: (id: string, token: string) => void }) {
-  const [step, setStep] = React.useState<'id' | 'draw' | 'confirm'>('id');
+  const [step, setStep] = React.useState<'id' | 'draw' | 'confirm' | 'recovery'>('id');
+  const [recoveryCode, setRecoveryCode] = React.useState<string | null>(null);
+  const [createdToken, setCreatedToken] = React.useState<string>('');
   const [gardenId, setGardenId] = React.useState('');
   const [idError, setIdError] = React.useState('');
   const [idChecking, setIdChecking] = React.useState(false);
@@ -108,8 +111,12 @@ function CreateGardenScreen({ onBack, onCreate }: { onBack: () => void; onCreate
       if (pat === firstPattern) {
         setIsLoading(true);
         try {
-          const { token } = await api.gardens.create(gardenId, pat);
-          onCreate(gardenId, token);
+          const { token, recovery_code } = await api.gardens.create(gardenId, pat);
+          // Hold the user here until they have saved the key — it is the only
+          // copy, and after this screen it can never be shown again.
+          setCreatedToken(token);
+          setRecoveryCode(recovery_code);
+          setStep('recovery');
         } catch (err: any) {
           if (err.message === 'taken') {
             setConfirmError('Someone already has that garden');
@@ -148,7 +155,9 @@ function CreateGardenScreen({ onBack, onCreate }: { onBack: () => void; onCreate
   return (
     <div className="fade-enter" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>
       <div className="card" style={{ padding: '36px 32px', width: '100%', maxWidth: 420 }}>
-        <button onClick={onBack} className="btn btn-soft" style={{ padding: '6px 14px', fontSize: 13 }}>← Back</button>
+        {step !== 'recovery' && (
+          <button onClick={onBack} className="btn btn-soft" style={{ padding: '6px 14px', fontSize: 13 }}>← Back</button>
+        )}
 
         {step === 'id' && (
           <>
@@ -203,12 +212,23 @@ function CreateGardenScreen({ onBack, onCreate }: { onBack: () => void; onCreate
             <button onClick={handleClear} className="btn btn-soft" style={{ marginTop: 16, width: '100%', fontSize: 13 }}>Start over</button>
           </>
         )}
+
+        {step === 'recovery' && recoveryCode && (
+          <RecoveryCard
+            gardenId={gardenId}
+            code={recoveryCode}
+            title="Save your recovery key"
+            blurb="Your garden is planted. This QR card is the only way back in if you forget your pattern — save it to your photos or print it before you continue."
+            confirmLabel="Saved it — enter my garden →"
+            onConfirm={() => onCreate(gardenId, createdToken)}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function UnlockScreen({ onBack, onUnlock }: { onBack: () => void; onUnlock: (id: string, token: string) => void }) {
+function UnlockScreen({ onBack, onUnlock, onForgot }: { onBack: () => void; onUnlock: (id: string, token: string) => void; onForgot?: () => void }) {
   const [gardenId, setGardenId] = React.useState('');
   const [error, setError] = React.useState('');
   const [resetKey, setResetKey] = React.useState(0);
@@ -261,6 +281,12 @@ function UnlockScreen({ onBack, onUnlock }: { onBack: () => void; onUnlock: (id:
             {error && <div style={{ color: '#C05858', fontSize: 13, marginTop: 10, textAlign: 'center' }}>{error}</div>}
             {isLoading && <div style={{ color: 'var(--ink-soft)', fontSize: 13, marginTop: 10, textAlign: 'center' }}>Unlocking...</div>}
             <button onClick={() => { setStep('id'); setError(''); }} className="btn btn-soft" style={{ marginTop: 16, width: '100%', fontSize: 13 }}>← Back</button>
+            {onForgot && (
+              <button onClick={onForgot} className="btn btn-ghost"
+                style={{ marginTop: 8, width: '100%', fontSize: 13, color: 'var(--ink-soft)' }}>
+                Forgotten your pattern?
+              </button>
+            )}
           </>
         )}
       </div>

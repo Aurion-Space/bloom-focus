@@ -181,7 +181,7 @@ function StatCard({ label, value, sub }) {
   );
 }
 
-function DashboardScreen({ garden, sessions, onStart, onViewGarden, onLock }) {
+function DashboardScreen({ garden, sessions, onStart, onViewGarden, onLock, onRecoveryKey }) {
   const total = sessions.length;
   const totalMinutes = sessions.reduce((s, x) => s + x.duration_minutes, 0);
   // streak: consecutive days ending today
@@ -213,7 +213,12 @@ function DashboardScreen({ garden, sessions, onStart, onViewGarden, onLock }) {
             <div style={{ fontSize: 12, color: 'var(--ink-faint)' }}>@{garden.garden_id}</div>
           </div>
         </div>
-        <button onClick={onLock} className="btn btn-soft" style={{ padding: '8px 14px', fontSize: 13 }}>🔒 Lock garden</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {onRecoveryKey && (
+            <button onClick={onRecoveryKey} className="btn btn-soft" style={{ padding: '8px 14px', fontSize: 13 }} title="Save a key that can reset a forgotten pattern">✪ Recovery key</button>
+          )}
+          <button onClick={onLock} className="btn btn-soft" style={{ padding: '8px 14px', fontSize: 13 }}>🔒 Lock garden</button>
+        </div>
       </div>
 
       {/* hero */}

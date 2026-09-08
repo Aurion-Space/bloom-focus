@@ -133,8 +133,8 @@ export default function App() {
   const [store, setStore] = useState(loadStore);
   const [route, setRoute] = useState(() => window.location.hash.replace('#', ''));
   const [currentGarden, setCurrentGarden] = useState<string | null>(null);
-  const [authStep, setAuthStep] = useState<'welcome' | 'create' | 'unlock'>('welcome');
-  const [screen, setScreen] = useState<'dashboard' | 'new' | 'timer' | 'complete' | 'garden' | 'detail'>('dashboard');
+  const [authStep, setAuthStep] = useState<'welcome' | 'create' | 'unlock' | 'forgot'>('welcome');
+  const [screen, setScreen] = useState<'dashboard' | 'new' | 'timer' | 'complete' | 'garden' | 'detail' | 'recovery'>('dashboard');
   const [activeSession, setActiveSession] = useState<any>(null);
   const [lastCompleted, setLastCompleted] = useState<any>(null);
   const [detailSession, setDetailSession] = useState<any>(null);
@@ -229,6 +229,8 @@ export default function App() {
   const WelcomeScreen = (window as any).WelcomeScreen;
   const CreateGardenScreen = (window as any).CreateGardenScreen;
   const UnlockScreen = (window as any).UnlockScreen;
+  const ForgotPatternScreen = (window as any).ForgotPatternScreen;
+  const RecoveryKeyScreen = (window as any).RecoveryKeyScreen;
   const DashboardScreen = (window as any).DashboardScreen;
   const NewSessionScreen = (window as any).NewSessionScreen;
   const TimerScreen = (window as any).TimerScreen;
@@ -264,6 +266,7 @@ export default function App() {
         <UnlockScreen
           gardens={store.gardens}
           onBack={() => setAuthStep('welcome')}
+          onForgot={() => setAuthStep('forgot')}
           onUnlock={async (id: string, _token: string) => {
             setCurrentGarden(id);
             try {
@@ -273,6 +276,20 @@ export default function App() {
             } catch {
               pushToast(`Welcome back, @${id}`);
             }
+          }}
+        />
+      );
+    } else if (authStep === 'forgot') {
+      content = ForgotPatternScreen && (
+        <ForgotPatternScreen
+          onBack={() => setAuthStep('unlock')}
+          onRecovered={async (id: string, _token: string) => {
+            setCurrentGarden(id);
+            try {
+              const { sessions } = await api.sessions.list(100);
+              setStore((s: any) => ({ ...s, sessions }));
+            } catch {}
+            pushToast(`New pattern saved, @${id} ✿`);
           }}
         />
       );
@@ -304,6 +321,7 @@ export default function App() {
           setGardenDayFilter(options?.day || 'all');
           setScreen('garden');
         }}
+        onRecoveryKey={() => setScreen('recovery')}
         onLock={() => {
           setCurrentGarden(null);
           setAuthStep('welcome');
@@ -396,6 +414,13 @@ export default function App() {
         gardenId={currentGarden}
         onBack={() => setScreen('garden')}
         onToast={pushToast}
+      />
+    );
+  } else if (screen === 'recovery') {
+    content = RecoveryKeyScreen && (
+      <RecoveryKeyScreen
+        gardenId={currentGarden}
+        onBack={() => setScreen('dashboard')}
       />
     );
   }
