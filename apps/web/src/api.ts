@@ -55,13 +55,31 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   gardens: {
-    async create(gardenId: string, pattern: string): Promise<{ token: string; garden: Garden }> {
-      const data = await fetchJson<{ token: string; garden: Garden }>('/gardens', {
+    async create(gardenId: string, pattern: string): Promise<{ token: string; garden: Garden; recovery_code: string }> {
+      const data = await fetchJson<{ token: string; garden: Garden; recovery_code: string }>('/gardens', {
         method: 'POST',
         body: JSON.stringify({ garden_id: gardenId, pattern }),
       });
       setToken(data.token);
       return data;
+    },
+
+    /** Reset a forgotten pattern with the saved recovery key. Returns a fresh key. */
+    async recover(gardenId: string, recoveryCode: string, pattern: string): Promise<{ token: string; garden: Garden; recovery_code: string }> {
+      const data = await fetchJson<{ token: string; garden: Garden; recovery_code: string }>('/gardens/recover', {
+        method: 'POST',
+        body: JSON.stringify({ garden_id: gardenId, recovery_code: recoveryCode, pattern }),
+      });
+      setToken(data.token);
+      return data;
+    },
+
+    /** Issue a recovery key for the garden already unlocked. Retires any previous one. */
+    async issueRecoveryCode(): Promise<{ recovery_code: string }> {
+      return fetchJson<{ recovery_code: string }>('/gardens/recovery-code', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
     },
 
     async check(gardenId: string): Promise<{ available: boolean }> {

@@ -124,6 +124,10 @@ CREATE TABLE gardens (
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- migrations/002_recovery.sql
+ALTER TABLE gardens ADD COLUMN recovery_hash TEXT;        -- sha256 of the recovery code, see §6.5
+ALTER TABLE gardens ADD COLUMN recovery_issued_at TEXT;   -- when the current code was minted
+
 CREATE TABLE sessions (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   garden_id        TEXT NOT NULL REFERENCES gardens(garden_id) ON DELETE CASCADE,
@@ -141,6 +145,7 @@ CREATE INDEX idx_sessions_slug    ON sessions(unique_slug);
 **Constraints & rules**
 - `garden_id` regex: `/^[a-z0-9]{3,20}$/` (lowercased on write)
 - `pattern_hash`: bcrypt of the raw pattern string (`"0,1,2,5,4"`) at cost 10
+- `recovery_hash`: nullable — gardens created before recovery existed have none until their owner issues one from §9.11
 - `intention`: trimmed, 1–120 chars
 - `plant_type`: must be one of the 12 registry ids
 - `unique_slug` format: `bloom-{adj}-{noun}-{4charRand}` — see §4.1
@@ -207,6 +212,7 @@ Base URL: `/api`. All JSON. All write endpoints require `Authorization: Bearer <
 - On success, server returns a short-lived signed JWT (`HS256`, 24h) containing `{ garden_id }` — use a random 32-byte `JWT_SECRET` env var
 - Middleware `requireGarden` decodes token and attaches `req.gardenId`
 - Rate-limit unlock attempts: 5 per 15min per IP+garden_id → HTTP 429
+- Rate-limit recovery attempts: 5 per hour per IP+garden_id → HTTP 429
 
 ### 6.2 Endpoints
 
@@ -215,9 +221,30 @@ Base URL: `/api`. All JSON. All write endpoints require `Authorization: Bearer <
 Body: { garden_id: string, pattern: string }
   - garden_id must match /^[a-z0-9]{3,20}$/
   - pattern must have ≥ 4 unique dots, ≤ 9
-201 → { token: string, garden: { garden_id, created_at } }
-409 → { error: "taken" }      // garden_id exists
+201 → { token: string, garden: { garden_id, created_at }, recovery_code: string }
+409 → { error: "taken" }      // garden_id exists, incl. two concurrent claims
 400 → { error: "invalid_id" | "invalid_pattern" }
+```
+`recovery_code` is returned here and nowhere else — the server keeps only its hash.
+
+#### `POST /api/gardens/recover` — reset a forgotten pattern
+```
+Body: { garden_id: string, recovery_code: string, pattern: string }
+  - recovery_code accepted in any casing, with or without dashes/spaces
+  - pattern is the NEW pattern, same rules as create
+200 → { token, garden: { garden_id, created_at }, recovery_code: string }  // code is rotated
+404 → { error: "not_found" }              // no such garden
+409 → { error: "no_recovery_code" }       // garden predates recovery, none issued
+401 → { error: "invalid_recovery_code" }
+400 → { error: "invalid_id" | "invalid_pattern" }
+429 → { error: "too_many_attempts" }
+```
+
+#### `POST /api/gardens/recovery-code` — issue a key for the garden you're in
+```
+Headers: Authorization
+200 → { recovery_code: string }   // retires any previous code for this garden
+401 → { error: "unauthorized" | "invalid_token" }
 ```
 
 #### `POST /api/gardens/unlock` — sign in
@@ -272,6 +299,23 @@ type Session = {
 
 ### 6.4 Error shape
 All errors: `{ error: string, detail?: string }` with appropriate HTTP codes.
+
+### 6.5 Recovery codes
+BloomFocus holds no email or phone, so the recovery code *is* the second factor. It is not a
+password and is not treated like one.
+
+- **Format** `BLOOM-XXXX-XXXX-XXXX-XXXX` — 16 characters of Crockford base32 (no `I`, `L`, `O`, `U`),
+  from `randomBytes(10)`, so 80 bits of entropy.
+- **Stored as SHA-256, not bcrypt.** Bcrypt's work factor exists to make low-entropy human passwords
+  expensive to guess; 80 random bits are not guessable at any hash speed. Bcrypt here would add a
+  second ~98 ms hash to every signup for no security gain. Compared with `timingSafeEqual`.
+- **Rotated on every successful use**, so a card that has been used — or photographed by someone
+  after use — stops working.
+- **Carried in a QR as the bare code**, never as a URL into the site: a URL would put the secret
+  into browser history, referrer headers, and server logs. The QR is a key, not a container — it
+  holds no encrypted pattern data, because anything the client can decrypt, so can anyone holding
+  the image.
+- The plaintext exists only in the create/recover/issue response. Never logged.
 
 ---
 
@@ -372,14 +416,16 @@ Toggleable via `data-theme` on `<html>`:
 Three steps in a single card:
 1. **Name your garden** — text input (3–20 alphanum, lowercased). Suggestion chips: `sakura2026`, `quietmoss`, `studybloom`, `rosegarden`. Validate server-side for uniqueness.
 2. **Draw your secret** — pattern lock (see §10), requires ≥4 dots
-3. **Once more, to remember** — redraw. On mismatch: show "Shapes don't match — let's try again", return to step 2. On match: `POST /api/gardens` → token stored, redirect to dashboard.
+3. **Once more, to remember** — redraw. On mismatch: show "Shapes don't match — let's try again", return to step 2. On match: `POST /api/gardens` → token stored.
+4. **Save your recovery key** — the card from §9.11. The Back button is hidden here: this is the only
+   time the code is shown, so the user is held until they confirm. Confirming enters the dashboard.
 
 ### 9.3 Unlock (`/unlock`)
 1. **Which garden?** — text input, autosuggest from recently used (localStorage) showing chips
-2. **Hello, @{garden_id}. Draw your secret shape.** — pattern lock. Wrong pattern: error + clear. 5 wrong in 15min → locked by rate limiter.
+2. **Hello, @{garden_id}. Draw your secret shape.** — pattern lock. Wrong pattern: error + clear. 5 wrong in 15min → locked by rate limiter. A quiet **Forgotten your pattern?** ghost button leads to §9.12.
 
 ### 9.4 Dashboard (`/home`)
-- Top bar: logo + `@{garden_id}` + 🔒 Lock garden button
+- Top bar: logo + `@{garden_id}` + ✿ Recovery key button (§9.11) + 🔒 Lock garden button
 - Greeting (time-of-day aware): _"Good morning, gardener"_
 - Hero: `Your garden has {N} blooms.` + subcopy _"What shall we grow today?"_
 - Stat row: Total blooms · Minutes focused · Current streak
@@ -445,6 +491,35 @@ No auth. Pulls from `GET /api/sessions/:slug`.
 - Divider + CTA: _"grow your own"_ → button "🌱 Plant my first bloom" links to `/`
 
 ---
+
+### 9.11 Recovery key (`/recovery-key`)
+Reached from the dashboard. Explains what a key is, and that making a new one retires the old card,
+then `POST /api/gardens/recovery-code` on confirm. This is how gardens created before recovery
+existed get their first key.
+
+**The recovery card** (shared component, also shown at §9.2 step 4 and at the end of §9.12):
+- QR rendered client-side from the bare code at 720px, error correction `H`
+- The code in monospace beneath it, `user-select: all`
+- **Save the card** builds a 760×1040 PNG on canvas — cream ground, white card, `@{garden_id}`,
+  QR at 380px, the code, and the line _"It is the only way back into your garden if you forget your
+  pattern."_ Filename `bloomfocus-recovery-{garden_id}.png`
+- **Copy code** falls back to a "select it by hand" message if the clipboard is blocked
+- Footer warning: _"Anyone holding this key can reset your garden."_
+
+### 9.12 Forgotten pattern (`/forgot`)
+1. **Forgotten pattern** — garden name input, same regex as unlock
+2. **Your recovery key** — **Upload the QR card** (file input, `accept="image/*"`) or type the code.
+   Uploaded images are decoded in-browser with `jsQR`: the image is drawn to a canvas, scaled so its
+   longest edge is ≤1400px (phone photos are far larger than the decoder needs, and scaling down
+   both speeds it up and improves the hit rate), then read with `inversionAttempts: 'attemptBoth'`.
+   No image ever leaves the device. Failure: _"No QR code found in that image."_
+3. **Draw a new secret** → **Once more, to remember** — same two-step confirm as create
+4. On success, `POST /api/gardens/recover` returns a rotated code, shown as a fresh recovery card
+   before entering the garden
+
+Error copy maps the API: `invalid_recovery_code` → _"That key does not match this garden."_,
+`no_recovery_code` → explains the garden predates recovery and can only be opened with its pattern,
+`too_many_attempts` → _"Try again in an hour."_
 
 ## 10. Pattern Lock component
 

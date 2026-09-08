@@ -11,10 +11,19 @@ Use the live site to explore the deployed app without setting up a local environ
 ## Features
 
 - Pattern-lock garden access.
+- QR recovery keys for a forgotten pattern — no email required.
 - Focus sessions with completion tracking.
 - Public garden links and QR sharing.
 - Plant-based progress visualization.
 - SQLite-backed API with signed garden tokens.
+
+## Recovery keys
+
+BloomFocus stores no email or phone, so a downloadable QR card is the way back into a garden whose
+pattern has been forgotten. A key is issued once at signup, and again on demand from the dashboard
+(**✿ Recovery key**) — which is how gardens created before this feature get one. Using a key resets
+the pattern and rotates the key, so a used card stops working. The server stores only a hash; the
+code itself is shown exactly once. See `SPEC.md` §6.5.
 
 ## Tech Stack
 

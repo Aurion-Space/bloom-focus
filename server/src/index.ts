@@ -1,3 +1,8 @@
+// Must be imported before any Router is constructed: Express 4 does not forward
+// rejected promises from async handlers, so without this an async throw becomes
+// an unhandled rejection and Node terminates the process.
+import 'express-async-errors';
+
 import express from 'express';
 import cors from 'cors';
 import { mkdirSync } from 'fs';

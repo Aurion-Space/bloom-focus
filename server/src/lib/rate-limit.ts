@@ -102,7 +102,8 @@ export function createRateLimitMiddleware({
 }
 
 export const apiRateLimiter = new InMemoryRateLimiter(240, 60 * 1000);
-export const gardenCreateRateLimiter = new InMemoryRateLimiter(10, 15 * 60 * 1000);
+export const gardenCreateRateLimiter = new InMemoryRateLimiter(40, 60 * 60 * 1000);
 export const sessionCreateRateLimiter = new InMemoryRateLimiter(60, 10 * 60 * 1000);
 export const qrRateLimiter = new InMemoryRateLimiter(30, 5 * 60 * 1000);
 export const unlockRateLimiter = new InMemoryRateLimiter(5, 15 * 60 * 1000);
+export const recoverRateLimiter = new InMemoryRateLimiter(5, 60 * 60 * 1000);

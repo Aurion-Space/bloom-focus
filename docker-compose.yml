@@ -12,7 +12,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
-      TRUST_PROXY: ${TRUST_PROXY:-true}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
       BCRYPT_COST: ${BCRYPT_COST:-10}
     volumes:
       - bloomfocus-data:/app/server/data
