@@ -14,6 +14,12 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
       TRUST_PROXY: ${TRUST_PROXY:-1}
       BCRYPT_COST: ${BCRYPT_COST:-10}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      RESET_TOKEN_TTL_MINUTES: ${RESET_TOKEN_TTL_MINUTES:-45}
     volumes:
       - bloomfocus-data:/app/server/data
     healthcheck:

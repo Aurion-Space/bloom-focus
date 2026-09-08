@@ -220,6 +220,33 @@ export default function App() {
   }
 
   // Public bloom route - fetch from API
+  const resetMatch = route.match(/^\/reset\/(.+)$/);
+  if (resetMatch) {
+    const ResetLinkScreen = (window as any).ResetLinkScreen;
+    return (
+      <>
+        {(window as any).Ambient && React.createElement((window as any).Ambient, { kind: tweaks.ambient, count: 16 })}
+        <div className="app-root">
+          {ResetLinkScreen && (
+            <ResetLinkScreen
+              token={resetMatch[1]}
+              onDone={async (id: string) => {
+                setCurrentGarden(id);
+                window.location.hash = '';
+                try {
+                  const { sessions } = await api.sessions.list(100);
+                  setStore((prev: any) => ({ ...prev, sessions }));
+                } catch {}
+                pushToast(`New pattern saved, @${id}`);
+              }}
+            />
+          )}
+        </div>
+        {toast && <div className="toast">{toast}</div>}
+      </>
+    );
+  }
+
   const publicMatch = route.match(/^\/b\/(.+)$/);
   if (publicMatch) {
     const slugStr = publicMatch[1];

@@ -21,7 +21,9 @@ BloomFocus turns quiet focused time into a little garden. A user:
 8. Anyone with the share link sees a **public bloom viewer** (no auth)
 
 ### 1.1 Non-goals
-- No email / social login
+- No social login, and no email *required* — an address is optional, collected only
+  if a user wants pattern reset by mail, and removable at any time (see §6.6).
+  Everything works without it; the QR recovery key stays the primary route.
 - No comments, likes, follows — it's a private garden with optional public share links
 - No real-time collaboration
 - No recurring sessions / streaks beyond a simple day-streak readout
@@ -128,6 +130,22 @@ CREATE TABLE gardens (
 ALTER TABLE gardens ADD COLUMN recovery_hash TEXT;        -- sha256 of the recovery code, see §6.5
 ALTER TABLE gardens ADD COLUMN recovery_issued_at TEXT;   -- when the current code was minted
 
+-- migrations/003_email_reset.sql
+ALTER TABLE gardens ADD COLUMN email TEXT;                -- optional, for reset mail only
+ALTER TABLE gardens ADD COLUMN email_added_at TEXT;
+
+CREATE TABLE reset_tokens (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  garden_id  TEXT NOT NULL REFERENCES gardens(garden_id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,   -- sha256; the token itself only ever exists in the email
+  expires_at TEXT NOT NULL,
+  used_at    TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX idx_reset_tokens_hash   ON reset_tokens(token_hash);
+CREATE INDEX idx_reset_tokens_garden ON reset_tokens(garden_id, created_at DESC);
+
 CREATE TABLE sessions (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   garden_id        TEXT NOT NULL REFERENCES gardens(garden_id) ON DELETE CASCADE,
@@ -146,6 +164,8 @@ CREATE INDEX idx_sessions_slug    ON sessions(unique_slug);
 - `garden_id` regex: `/^[a-z0-9]{3,20}$/` (lowercased on write)
 - `pattern_hash`: bcrypt of the raw pattern string (`"0,1,2,5,4"`) at cost 10
 - `recovery_hash`: nullable — gardens created before recovery existed have none until their owner issues one from §9.11
+- `email`: nullable and always optional; stored lowercased, used only for reset mail
+- `reset_tokens.used_at`: set both when a link is spent and when a newer request supersedes it
 - `intention`: trimmed, 1–120 chars
 - `plant_type`: must be one of the 12 registry ids
 - `unique_slug` format: `bloom-{adj}-{noun}-{4charRand}` — see §4.1
@@ -284,6 +304,47 @@ This powers the public bloom viewer. No auth. No sensitive fields.
 #### `GET /api/qr/:slug.png` — **public** QR PNG
 Server-rendered QR code that encodes `https://bloomfocus.app/#/b/:slug`. 512×512, dark `#3B2E2A`, transparent background. Content-Type `image/png`, cached 7d.
 
+#### `POST /api/gardens/email` — attach or clear the reset address
+```
+Headers: Authorization
+Body: { email: string }      // '' removes the address
+200 → { email: string | null }
+400 → { error: "invalid_email" }
+```
+
+#### `GET /api/gardens/email` — what the dashboard shows
+```
+Headers: Authorization
+200 → { email: string | null, email_enabled: boolean }
+```
+`email_enabled` is false when the server has no SMTP configured, and the UI says so
+rather than offering a route that cannot work.
+
+#### `POST /api/gardens/forgot` — request a reset link
+```
+Body: { garden_id: string }
+200 → { status: "sent" }     // identical whether or not the garden exists or has an address
+400 → { error: "invalid_id" }
+503 → { error: "email_unavailable" }   // no SMTP configured
+429 → { error: "too_many_attempts" }   // 3/hour per IP+garden
+```
+
+#### `POST /api/gardens/reset/check` — is this link still good?
+```
+Body: { token: string }
+200 → { valid: true, garden_id: string }
+401 → { error: "invalid_token" }
+```
+Token travels in the body, not the path, to keep it out of access logs.
+
+#### `POST /api/gardens/reset` — spend a link
+```
+Body: { token: string, pattern: string }
+200 → { token, garden: { garden_id, created_at } }
+401 → { error: "invalid_token" }    // unknown, spent, superseded or expired
+400 → { error: "invalid_pattern" }
+```
+
 ### 6.3 `Session` type
 ```ts
 type Session = {
@@ -316,6 +377,26 @@ password and is not treated like one.
   holds no encrypted pattern data, because anything the client can decrypt, so can anyone holding
   the image.
 - The plaintext exists only in the create/recover/issue response. Never logged.
+
+### 6.6 Email reset
+A second way back in, for users who would rather not keep a QR card. Optional at
+every level: no address is ever required, and the whole feature switches off if the
+server has no SMTP credentials.
+
+- **Tokens** are 32 random bytes, base64url, stored as SHA-256. The plaintext exists
+  only in the message; the link carries it in the URL *fragment*, which browsers never
+  send to a server.
+- **Single use, and superseded.** Spending a link marks it used; requesting a new one
+  marks every outstanding link for that garden used, so only the newest works.
+- **Expiry** defaults to 45 minutes (`RESET_TOKEN_TTL_MINUTES`).
+- **`/forgot` answers identically** whether the garden exists, has no address, or the
+  mail fails to send — garden names are public, so any variation would confirm which
+  ones have an address on file. Send failures are logged server-side only.
+- **Throttled** at 3 requests per hour per IP+garden, so the endpoint cannot be used to
+  flood someone's inbox.
+- **SMTP** uses a Gmail App Password by default (`SMTP_USER` / `SMTP_PASS`). Not the
+  account password, and not OAuth: an app password needs no consent flow or refresh
+  token to maintain.
 
 ---
 
@@ -521,6 +602,21 @@ Error copy maps the API: `invalid_recovery_code` → _"That key does not match t
 `no_recovery_code` → explains the garden predates recovery and can only be opened with its pattern,
 `too_many_attempts` → _"Try again in an hour."_
 
+### 9.13 Reset address (part of §9.11)
+Below the QR key on the recovery screen: an optional email field with Save / Update /
+Remove. When the server reports `email_enabled: false` the section explains that this
+server cannot send mail rather than offering a dead control.
+
+### 9.14 Reset from an emailed link (`#/reset/:token`)
+Opens straight from the email, with no need to be signed in.
+1. **Checking your link** — calls `/gardens/reset/check` on mount, so a spent or expired
+   link says so immediately instead of after the user draws a new pattern twice
+2. **Draw a new secret** → **Once more, to remember** — names the garden being reset
+3. On success, drops straight into the garden with a fresh session
+
+The forgot flow (§9.12) gains a step before asking for a key: **How shall we let you
+back in?**, offering the QR card or an emailed link.
+
 ## 10. Pattern Lock component
 
 **Spec:**
@@ -549,8 +645,18 @@ PORT=4000
 DATABASE_PATH=./data/bloomfocus.db
 JWT_SECRET=<32-byte random hex>
 FRONTEND_ORIGIN=http://localhost:5173   # for CORS
-PUBLIC_BASE_URL=http://localhost:5173   # used in QR code share URLs
+PUBLIC_BASE_URL=http://localhost:5173   # used in QR share URLs and reset links
 BCRYPT_COST=10
+TRUST_PROXY=1                           # proxy hop count; never "true" (see §6.1)
+
+# Email reset — omit SMTP_USER/SMTP_PASS to disable the feature entirely.
+# Gmail needs an App Password, not the account password.
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=support.aurarios@gmail.com
+SMTP_PASS=<16-char app password>
+SMTP_FROM=BloomFocus <support.aurarios@gmail.com>
+RESET_TOKEN_TTL_MINUTES=45
 ```
 
 `apps/web/.env`

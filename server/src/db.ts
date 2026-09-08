@@ -19,7 +19,7 @@ export function getDb(): any {
 // Applied in order and tracked with PRAGMA user_version. Listed explicitly
 // rather than globbed so that 002_seed.sql — demo data with a placeholder
 // password hash — can never reach a real database.
-const MIGRATIONS = ['001_init.sql', '002_recovery.sql'];
+const MIGRATIONS = ['001_init.sql', '002_recovery.sql', '003_email_reset.sql'];
 
 export function runMigrations() {
   const db = getDb();

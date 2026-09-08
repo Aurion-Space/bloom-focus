@@ -99,3 +99,37 @@ export function getTrustProxy(): string | number | boolean {
   if (raw === 'false') return false;
   return raw;
 }
+
+export interface SmtpConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+  from: string;
+}
+
+/**
+ * Returns null when SMTP is not configured, which is a supported state: the
+ * email reset route simply reports itself unavailable and the QR recovery key
+ * carries on as the primary way back into a garden.
+ */
+export function getSmtpConfig(): SmtpConfig | null {
+  const user = process.env.SMTP_USER?.trim();
+  const pass = process.env.SMTP_PASS?.trim();
+  if (!user || !pass) return null;
+
+  const port = parseInteger('SMTP_PORT', 587, 1, 65535);
+  return {
+    host: process.env.SMTP_HOST?.trim() || 'smtp.gmail.com',
+    port,
+    secure: port === 465,
+    user,
+    pass,
+    from: process.env.SMTP_FROM?.trim() || `BloomFocus <${user}>`,
+  };
+}
+
+export function getResetTokenTtlMinutes(): number {
+  return parseInteger('RESET_TOKEN_TTL_MINUTES', 45, 5, 1440);
+}

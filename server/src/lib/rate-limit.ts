@@ -107,3 +107,4 @@ export const sessionCreateRateLimiter = new InMemoryRateLimiter(60, 10 * 60 * 10
 export const qrRateLimiter = new InMemoryRateLimiter(30, 5 * 60 * 1000);
 export const unlockRateLimiter = new InMemoryRateLimiter(5, 15 * 60 * 1000);
 export const recoverRateLimiter = new InMemoryRateLimiter(5, 60 * 60 * 1000);
+export const emailResetRateLimiter = new InMemoryRateLimiter(3, 60 * 60 * 1000);

@@ -224,6 +224,191 @@ function RecoveryCard({
   );
 }
 
+// ---------- address for reset mail ----------
+
+function EmailSection({ gardenId }: { gardenId: string }) {
+  const [saved, setSaved] = React.useState<string | null>(null);
+  const [enabled, setEnabled] = React.useState(true);
+  const [draft, setDraft] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [note, setNote] = React.useState('');
+  const [error, setError] = React.useState('');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    api.gardens.getEmail()
+      .then(({ email, email_enabled }) => {
+        if (cancelled) return;
+        setSaved(email);
+        setEnabled(email_enabled);
+        setDraft(email || '');
+      })
+      .catch(() => { if (!cancelled) setEnabled(false); });
+    return () => { cancelled = true; };
+  }, [gardenId]);
+
+  const save = async (value: string) => {
+    setBusy(true);
+    setError('');
+    setNote('');
+    try {
+      const { email } = await api.gardens.setEmail(value);
+      setSaved(email);
+      setDraft(email || '');
+      setNote(email ? 'Saved. Reset links will go here.' : 'Address removed.');
+    } catch (err: any) {
+      setError(err?.message === 'invalid_email'
+        ? 'That does not look like an email address.'
+        : 'Could not save that. Please try again.');
+    }
+    setBusy(false);
+  };
+
+  if (!enabled) {
+    return (
+      <div style={{ marginTop: 26, paddingTop: 22, borderTop: '1px solid var(--line)' }}>
+        <h3 className="serif" style={{ fontSize: 20, margin: '0 0 6px' }}>Reset by email</h3>
+        <p style={{ color: 'var(--ink-faint)', fontSize: 13, margin: 0, lineHeight: 1.6 }}>
+          Not available on this server, so your QR key is the way back in.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 26, paddingTop: 22, borderTop: '1px solid var(--line)' }}>
+      <h3 className="serif" style={{ fontSize: 20, margin: '0 0 6px' }}>Reset by email</h3>
+      <p style={{ color: 'var(--ink-soft)', fontSize: 13, margin: '0 0 14px', lineHeight: 1.6 }}>
+        {saved
+          ? 'A reset link can be sent here if you forget your pattern.'
+          : 'Optional. Add an address and you can reset your pattern by email as well as by QR key.'}
+      </p>
+
+      <input className="input" type="email" value={draft} disabled={busy}
+        onChange={e => { setDraft(e.target.value); setError(''); setNote(''); }}
+        onKeyDown={e => e.key === 'Enter' && draft.trim() && save(draft.trim())}
+        placeholder="you@example.com" style={{ fontSize: 15 }}/>
+
+      {error && <div style={{ color: '#C05858', fontSize: 13, marginTop: 8 }}>{error}</div>}
+      {note && <div style={{ color: 'var(--ink-soft)', fontSize: 13, marginTop: 8 }}>{note}</div>}
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button className="btn btn-primary" disabled={busy || !draft.trim() || draft.trim() === saved}
+          onClick={() => save(draft.trim())}
+          style={{ flex: 1, opacity: (busy || !draft.trim() || draft.trim() === saved) ? 0.45 : 1 }}>
+          {busy ? 'Saving...' : saved ? 'Update' : 'Save address'}
+        </button>
+        {saved && (
+          <button className="btn btn-soft" disabled={busy} onClick={() => save('')} style={{ flex: 1 }}>Remove</button>
+        )}
+      </div>
+
+      <p style={{ color: 'var(--ink-faint)', fontSize: 12, marginTop: 12, lineHeight: 1.55 }}>
+        Stored only to send reset links. Remove it any time.
+      </p>
+    </div>
+  );
+}
+
+// ---------- resetting from an emailed link ----------
+
+function ResetLinkScreen({ token, onDone }: { token: string; onDone: (gardenId: string) => void }) {
+  const [step, setStep] = React.useState<'draw' | 'confirm'>('draw');
+  const [first, setFirst] = React.useState<string | null>(null);
+  const [resetKey, setResetKey] = React.useState(0);
+  const [error, setError] = React.useState('');
+  const [dead, setDead] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [checking, setChecking] = React.useState(true);
+  const [gardenId, setGardenId] = React.useState('');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    api.gardens.checkResetToken(token)
+      .then(({ garden_id }) => { if (!cancelled) { setGardenId(garden_id); setChecking(false); } })
+      .catch(() => { if (!cancelled) { setDead(true); setChecking(false); } });
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const handlePattern = async (pattern: string) => {
+    if (step === 'draw') {
+      setFirst(pattern);
+      setResetKey(k => k + 1);
+      setError('');
+      setStep('confirm');
+      return;
+    }
+
+    if (pattern !== first) {
+      setError('Those two shapes are different. Start again.');
+      setFirst(null);
+      setResetKey(k => k + 1);
+      setStep('draw');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const { garden } = await api.gardens.resetWithToken(token, pattern);
+      onDone(garden.garden_id);
+    } catch (err: any) {
+      if (err?.message === 'invalid_token') {
+        setDead(true);
+      } else if (err?.message === 'invalid_pattern') {
+        setError('Connect at least 4 dots.');
+        setStep('draw');
+      } else {
+        setError('Something went wrong. Please try again.');
+        setStep('draw');
+      }
+      setFirst(null);
+      setResetKey(k => k + 1);
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="fade-enter" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>
+      <div className="card" style={{ padding: '36px 32px', width: '100%', maxWidth: 420 }}>
+        {checking ? (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <div className="hand" style={{ fontSize: 22, color: 'var(--ink-soft)' }}>Checking your link...</div>
+          </div>
+        ) : dead ? (
+          <>
+            <h2 className="serif" style={{ fontSize: 28, margin: '4px 0 8px' }}>This link has expired</h2>
+            <p style={{ color: 'var(--ink-soft)', fontSize: 14, lineHeight: 1.6, margin: '0 0 22px' }}>
+              Reset links work once and only for a short while. Ask for a fresh one, or use your QR recovery key.
+            </p>
+            <button className="btn btn-primary" style={{ width: '100%' }}
+              onClick={() => { window.location.hash = ''; }}>
+              Back to BloomFocus
+            </button>
+          </>
+        ) : (
+          <>
+            <h2 className="serif" style={{ fontSize: 28, margin: '4px 0 4px' }}>
+              {step === 'draw' ? 'Draw a new secret' : 'Once more, to remember'}
+            </h2>
+            <p style={{ color: 'var(--ink-soft)', margin: '0 0 20px', fontSize: 14, lineHeight: 1.5 }}>
+              {step === 'draw'
+                ? `Connect at least 4 dots. This replaces the pattern for @${gardenId}.`
+                : 'Draw the same shape again.'}
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <PatternLock size={260} resetKey={resetKey} onComplete={handlePattern}/>
+            </div>
+            {error && <div style={{ color: '#C05858', fontSize: 13, marginTop: 10, textAlign: 'center', lineHeight: 1.5 }}>{error}</div>}
+            {busy && <div style={{ color: 'var(--ink-soft)', fontSize: 13, marginTop: 10, textAlign: 'center' }}>Saving your new pattern...</div>}
+            <button onClick={() => { setFirst(null); setResetKey(k => k + 1); setError(''); setStep('draw'); }}
+              className="btn btn-soft" style={{ marginTop: 16, width: '100%', fontSize: 13 }}>Start over</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------- forgot-pattern flow ----------
 
 function ForgotPatternScreen({
@@ -233,7 +418,8 @@ function ForgotPatternScreen({
   onBack: () => void;
   onRecovered: (gardenId: string, token: string) => void;
 }) {
-  const [step, setStep] = React.useState<'id' | 'key' | 'draw' | 'confirm' | 'saved'>('id');
+  const [step, setStep] = React.useState<'id' | 'choose' | 'sent' | 'key' | 'draw' | 'confirm' | 'saved'>('id');
+  const [emailBusy, setEmailBusy] = React.useState(false);
   const [gardenId, setGardenId] = React.useState('');
   const [code, setCode] = React.useState('');
   const [error, setError] = React.useState('');
@@ -249,7 +435,25 @@ function ForgotPatternScreen({
     if (!/^[a-z0-9]{3,20}$/.test(clean)) { setError('3–20 letters or numbers, please'); return; }
     setGardenId(clean);
     setError('');
-    setStep('key');
+    setStep('choose');
+  };
+
+  const requestLink = async () => {
+    setEmailBusy(true);
+    setError('');
+    try {
+      await api.gardens.forgot(gardenId);
+      setStep('sent');
+    } catch (err: any) {
+      if (err?.message === 'email_unavailable') {
+        setError('This server cannot send email. Use your QR key instead.');
+      } else if (err?.message === 'too_many_attempts') {
+        setError('Too many requests. Try again in an hour.');
+      } else {
+        setError('Could not send just now. Please try again.');
+      }
+    }
+    setEmailBusy(false);
   };
 
   const onFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -347,6 +551,44 @@ function ForgotPatternScreen({
             {error && <div style={{ color: '#C05858', fontSize: 13, marginTop: 10 }}>{error}</div>}
             <button className="btn btn-primary" disabled={!gardenId.trim()} onClick={submitId}
               style={{ width: '100%', marginTop: 22, opacity: gardenId.trim() ? 1 : 0.4 }}>Continue →</button>
+          </>
+        )}
+
+        {step === 'choose' && (
+          <>
+            <h2 className="serif" style={{ fontSize: 28, margin: '20px 0 4px' }}>How shall we let you back in?</h2>
+            <p style={{ color: 'var(--ink-soft)', margin: '0 0 20px', fontSize: 14, lineHeight: 1.55 }}>
+              Two ways into <strong style={{ color: 'var(--ink)' }}>@{gardenId}</strong>.
+            </p>
+
+            <button className="btn btn-soft" onClick={() => { setError(''); setStep('key'); }}
+              style={{ width: '100%', padding: '16px 14px', fontSize: 14, flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+              <div style={{ fontWeight: 600 }}>I have my recovery key</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-faint)', marginTop: 2 }}>Upload the QR card, or type the code</div>
+            </button>
+
+            <button className="btn btn-soft" onClick={requestLink} disabled={emailBusy}
+              style={{ width: '100%', padding: '16px 14px', fontSize: 14, marginTop: 10, flexDirection: 'column', alignItems: 'flex-start', gap: 2, opacity: emailBusy ? 0.5 : 1 }}>
+              <div style={{ fontWeight: 600 }}>{emailBusy ? 'Sending...' : 'Email me a link'}</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-faint)', marginTop: 2 }}>Only works if you added an address</div>
+            </button>
+
+            {error && <div style={{ color: '#C05858', fontSize: 13, marginTop: 12, lineHeight: 1.5 }}>{error}</div>}
+          </>
+        )}
+
+        {step === 'sent' && (
+          <>
+            <h2 className="serif" style={{ fontSize: 28, margin: '20px 0 8px' }}>Check your inbox</h2>
+            <p style={{ color: 'var(--ink-soft)', margin: '0 0 8px', fontSize: 14, lineHeight: 1.6 }}>
+              If <strong style={{ color: 'var(--ink)' }}>@{gardenId}</strong> has an address on file, a reset link is on its way.
+              It works once and expires shortly.
+            </p>
+            <p style={{ color: 'var(--ink-faint)', margin: '0 0 22px', fontSize: 13, lineHeight: 1.6 }}>
+              Nothing arriving? The garden may not have an address saved &mdash; your QR key still works.
+            </p>
+            <button className="btn btn-soft" onClick={() => { setError(''); setStep('choose'); }}
+              style={{ width: '100%' }}>Back</button>
           </>
         )}
 
@@ -455,6 +697,7 @@ function RecoveryKeyScreen({ gardenId, onBack }: { gardenId: string; onBack: () 
             <button className="btn btn-primary" onClick={issue} disabled={busy} style={{ width: '100%', opacity: busy ? 0.5 : 1 }}>
               {busy ? 'Creating…' : 'Create a recovery key'}
             </button>
+            <EmailSection gardenId={gardenId}/>
           </>
         )}
 
@@ -474,7 +717,8 @@ function RecoveryKeyScreen({ gardenId, onBack }: { gardenId: string; onBack: () 
 }
 
 (window as any).RecoveryCard = RecoveryCard;
+(window as any).ResetLinkScreen = ResetLinkScreen;
 (window as any).ForgotPatternScreen = ForgotPatternScreen;
 (window as any).RecoveryKeyScreen = RecoveryKeyScreen;
 
-export { RecoveryCard, ForgotPatternScreen, RecoveryKeyScreen };
+export { RecoveryCard, ForgotPatternScreen, RecoveryKeyScreen, ResetLinkScreen, EmailSection };

@@ -74,6 +74,45 @@ export const api = {
       return data;
     },
 
+    /** Address on file for reset mail, and whether the server can send at all. */
+    async getEmail(): Promise<{ email: string | null; email_enabled: boolean }> {
+      return fetchJson<{ email: string | null; email_enabled: boolean }>('/gardens/email');
+    },
+
+    /** Attach an address for reset mail, or pass '' to remove it. */
+    async setEmail(email: string): Promise<{ email: string | null }> {
+      return fetchJson<{ email: string | null }>('/gardens/email', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      });
+    },
+
+    /** Ask for a reset link. Answers the same way whether or not an address is on file. */
+    async forgot(gardenId: string): Promise<{ status: string }> {
+      return fetchJson<{ status: string }>('/gardens/forgot', {
+        method: 'POST',
+        body: JSON.stringify({ garden_id: gardenId }),
+      });
+    },
+
+    /** Check a reset link is still live, without spending it. */
+    async checkResetToken(token: string): Promise<{ valid: boolean; garden_id: string }> {
+      return fetchJson<{ valid: boolean; garden_id: string }>('/gardens/reset/check', {
+        method: 'POST',
+        body: JSON.stringify({ token }),
+      });
+    },
+
+    /** Spend a reset link from the email and set the new pattern. */
+    async resetWithToken(token: string, pattern: string): Promise<{ token: string; garden: Garden }> {
+      const data = await fetchJson<{ token: string; garden: Garden }>('/gardens/reset', {
+        method: 'POST',
+        body: JSON.stringify({ token, pattern }),
+      });
+      setToken(data.token);
+      return data;
+    },
+
     /** Issue a recovery key for the garden already unlocked. Retires any previous one. */
     async issueRecoveryCode(): Promise<{ recovery_code: string }> {
       return fetchJson<{ recovery_code: string }>('/gardens/recovery-code', {
